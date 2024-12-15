@@ -62,6 +62,7 @@ $app->post('/newbook', function ($request, $response, $args) use ($servername, $
     
     $cover = $data['cover'] ?? '';
     $title = $data['title'] ?? '';
+    $stuck =$data['stuck']??'';
     $author = $data['author'] ?? '';
 
     // Validate if all necessary fields are provided
@@ -85,7 +86,7 @@ $app->post('/newbook', function ($request, $response, $args) use ($servername, $
     }
 
     // Prepare the SQL query to insert the book
-    $sql = "INSERT INTO books (cover, title, author) VALUES ('$cover', '$title', '$author')";
+    $sql = "INSERT INTO books (cover, title, author,stuck) VALUES ('$cover', '$title', '$author','$stuck')";
 
     // Execute the query
     if ($conn->query($sql) === TRUE) {
@@ -102,6 +103,7 @@ $app->post('/newbook', function ($request, $response, $args) use ($servername, $
                                 'id' => $last_id, // Include the newly inserted ID
                                 'cover' => $cover,
                                 'title' => $title,
+                                'stuck'=>$stuck,
                                 'author' => $author
                             ]
                         ]));
@@ -119,26 +121,30 @@ $app->post('/newbook', function ($request, $response, $args) use ($servername, $
     $conn->close();
 });
 
-$app->post('/newreview', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+$app->post('/newreview', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
     // Get the data from the request (from JSON body)
     $data = $request->getParsedBody();
     
-    $book_title = $data['book_title'] ?? '';
-    $review = $data['review'] ?? '';
-    $username = $data['username'] ?? '';  // New field for the user who wrote the review
+    $userid = $data['userid'] ?? '';  // User ID
+    $bookid = $data['bookid'] ?? '';  // Book ID
+    $orderid = $data['orderid'] ?? '';  // Order ID
+    $review = $data['review'] ?? '';  // Review text
+    $rating = $data['rating'] ?? '';  // Rating (assumed to be an integer, like 1 to 5)
+    $like = $data['like'] ?? 0;  // Initial like count (defaults to 0)
+    $dislike = $data['dislike'] ?? 0;  // Initial dislike count (defaults to 0)
 
     // Validate if all necessary fields are provided
-    if (empty($book_title) || empty($review) || empty($username)) {
+    if (empty($userid) || empty($bookid) || empty($orderid) || empty($review) || empty($rating)) {
         return $response->withStatus(400) // Bad Request
                         ->withHeader('Content-Type', 'application/json')
                         ->write(json_encode([
                             'status' => 'error',
-                            'message' => 'Missing required fields: book_title, review, or username'
+                            'message' => 'Missing required fields: userid, bookid, orderid, review, or rating'
                         ]));
     }
 
     // Create a new mysqli connection
-    $conn = new mysqli($servername, $username, $password, $dbname);
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
     // Check the connection
     if ($conn->connect_error) {
@@ -147,45 +153,136 @@ $app->post('/newreview', function ($request, $response, $args) use ($servername,
                         ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
     }
 
-    // Prepare the SQL query to insert the review
-    $sql = "INSERT INTO reviews (book_title, review, username) VALUES ('$book_title', '$review', '$username')";
+    // Prepare the SQL query to insert the review with all the required columns
+    $sql = "INSERT INTO reviews (userid, bookid, orderid, review, rating, `like`, `dislike`) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)";
 
-    // Execute the query
-    if ($conn->query($sql) === TRUE) {
-        // Retrieve the last inserted ID
-        $last_id = $conn->insert_id;
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the parameters to the prepared statement
+        $stmt->bind_param("iiisiii", $userid, $bookid, $orderid, $review, $rating, $like, $dislike);
 
-        // Return a success response with the review information and ID as JSON
-        return $response->withStatus(200) // OK
-                        ->withHeader('Content-Type', 'application/json')
-                        ->write(json_encode([
-                            'status' => 'success',
-                            'message' => 'Review added successfully',
-                            'review' => [
-                                'id' => $last_id, // Include the newly inserted ID
-                                'book_title' => $book_title,
-                                'review' => $review,
-                                'username' => $username // Include the username
-                            ]
-                        ]));
+        // Execute the query
+        if ($stmt->execute()) {
+            // Retrieve the last inserted ID
+            $last_id = $conn->insert_id;
+
+            // Return a success response with the review information and ID as JSON
+            return $response->withStatus(200) // OK
+                            ->withHeader('Content-Type', 'application/json')
+                            ->write(json_encode([
+                                'status' => 'success',
+                                'message' => 'Review added successfully',
+                                'review' => [
+                                    'id' => $last_id, // Include the newly inserted ID
+                                    'userid' => $userid,
+                                    'bookid' => $bookid,
+                                    'orderid' => $orderid,
+                                    'review' => $review,
+                                    'rating' => $rating,
+                                    'like' => $like,
+                                    'dislike' => $dislike
+                                ]
+                            ]));
+        } else {
+            // Return an error response in case of failure
+            return $response->withStatus(500) // Internal Server Error
+                            ->withHeader('Content-Type', 'application/json')
+                            ->write(json_encode([
+                                'status' => 'error',
+                                'message' => 'Error: ' . $conn->error
+                            ]));
+        }
     } else {
-        // Return an error response in case of failure
+        // Return an error response if preparing the statement failed
         return $response->withStatus(500) // Internal Server Error
                         ->withHeader('Content-Type', 'application/json')
                         ->write(json_encode([
                             'status' => 'error',
-                            'message' => 'Error: ' . $conn->error
+                            'message' => 'Database query preparation failed'
                         ]));
     }
 
     // Close the connection
     $conn->close();
 });
-$app->post('/neworder', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+$app->get('/getreviewsbybookid', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
+    // Get the 'bookid' query parameter from the request
+    $bookid = $request->getQueryParam('bookid', null);
+
+    // Check if bookid is provided
+    if (!$bookid) {
+        return $response->withJson(['error' => 'Book ID is required'], 400); // Bad Request
+    }
+
+    // Create a new mysqli connection
+    $conn = new mysqli($servername, $username, $pass, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare the SQL query to select reviews based on the provided bookid
+    $sql = "SELECT reviewid, userid, bookid, orderid, review, rating, created_at,`like`, `dislike` FROM reviews WHERE bookid = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the bookid parameter to the prepared statement
+        $stmt->bind_param("i", $bookid);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Bind the result to variables
+            $stmt->bind_result($id, $userid, $bookid, $orderid, $review, $rating, $created_at, $like, $dislike);
+
+            // Fetch the results into an array
+            $reviews = [];
+            while ($stmt->fetch()) {
+                $reviews[] = [
+                    'id' => $id,
+                    'userid' => $userid,
+                    'bookid' => $bookid,
+                    'orderid' => $orderid,
+                    'review' => $review,
+                    'rating' => $rating,
+                    'created_at' => $created_at,
+                    'like' => $like,
+                    'dislike' => $dislike,
+                ];
+            }
+
+            // Close the statement
+            $stmt->close();
+
+            // If there are reviews, return them as JSON
+            if (count($reviews) > 0) {
+                return $response->withJson($reviews);
+            } else {
+                // If no reviews are found, return a 404
+                return $response->withJson(['error' => 'No reviews found for this book'], 404);
+            }
+        } else {
+            // Error in executing the query
+            return $response->withJson(['error' => 'Query execution failed'], 500);
+        }
+    } else {
+        // Error in preparing the SQL query
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+$app->post('/neworder', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
     // Get POST data
     $data = $request->getParsedBody();
     $email = $data['email'] ?? null;
     $book_title = $data['book_title'] ?? null;
+    $quantity = $data['quantity'] ?? null;
     $order_status = $data['order_status'] ?? null;
 
 
@@ -199,7 +296,7 @@ $app->post('/neworder', function ($request, $response, $args) use ($servername, 
     }
 
 
-    $conn = new mysqli($servername, $username, $password, $dbname);
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
     // Check the connection
     if ($conn->connect_error) {
@@ -208,12 +305,12 @@ $app->post('/neworder', function ($request, $response, $args) use ($servername, 
                         ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
     }
     // Prepare SQL query to insert new order
-    $sql = "INSERT INTO orders (email, book_title, order_status) VALUES (?, ?, ?)";
+    $sql = "INSERT INTO orders (email, book_title, quantity, order_status) VALUES (?, ?, ?, ?)";
     
     // Prepare statement
     if ($stmt = $conn->prepare($sql)) {
         // Bind parameters
-        $stmt->bind_param("sss", $email, $book_title, $order_status);
+        $stmt->bind_param("sss", $email, $book_title,$quantity, $order_status);
         
         // Execute the query
         if ($stmt->execute()) {
@@ -223,6 +320,7 @@ $app->post('/neworder', function ($request, $response, $args) use ($servername, 
                 'order' => [
                     'email' => $email,
                     'book_title' => $book_title,
+                    'quantity' => $quantity,
                     'order_status' => $order_status
                 ]
             ], 201);
@@ -239,9 +337,9 @@ $app->post('/neworder', function ($request, $response, $args) use ($servername, 
     }
 });
 
-$app->get('/getusers', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+$app->get('/getusers', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
     // Create the database connection
-    $conn = new mysqli($servername, $username, $password, $dbname);
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
     // Check for connection errors
     if ($conn->connect_error) {
@@ -271,7 +369,7 @@ $app->get('/getusers', function ($request, $response, $args) use ($servername, $
     // Close the connection
     $conn->close();
 });
-$app->get('/getuserbyemail', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+$app->get('/getuserbyemail', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
     // Get the 'email' query parameter from the request
     $email = $request->getQueryParam('email', null);
 
@@ -281,7 +379,7 @@ $app->get('/getuserbyemail', function ($request, $response, $args) use ($servern
     }
 
     // Create the database connection
-    $conn = new mysqli($servername, $username, $password, $dbname);
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
     // Check for connection errors
     if ($conn->connect_error) {
@@ -334,7 +432,7 @@ $app->get('/getuserbyemail', function ($request, $response, $args) use ($servern
     // Close the connection
     $conn->close();
 });
-$app->get('/getuserbyid', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+$app->get('/getuserbyid', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
     // Get the 'id' query parameter from the request
     $id = $request->getQueryParam('id', null);
 
@@ -344,7 +442,7 @@ $app->get('/getuserbyid', function ($request, $response, $args) use ($servername
     }
 
     // Create the database connection
-    $conn = new mysqli($servername, $username, $password, $dbname);
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
     // Check for connection errors
     if ($conn->connect_error) {
@@ -399,9 +497,9 @@ $app->get('/getuserbyid', function ($request, $response, $args) use ($servername
     $conn->close();
 });
 
-$app->get('/getbooks', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+$app->get('/getbooks', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
     // Create the database connection
-    $conn = new mysqli($servername, $username, $password, $dbname);
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
     // Check for connection errors
     if ($conn->connect_error) {
@@ -411,7 +509,7 @@ $app->get('/getbooks', function ($request, $response, $args) use ($servername, $
     }
 
     // Prepare SQL query to select all books
-    $sql = "SELECT bookid, title, author, cover FROM books";
+    $sql = "SELECT bookid, title, author, stuck, cover FROM books";
 
     // Execute the query
     if ($result = $conn->query($sql)) {
@@ -431,10 +529,133 @@ $app->get('/getbooks', function ($request, $response, $args) use ($servername, $
     // Close the connection
     $conn->close();
 });
+$app->get('/getbookbyid', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
+    // Get the 'bookid' query parameter from the request
+    $bookid = $request->getQueryParam('bookid', null);
 
-$app->get('/getorders', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+    // Check if bookid is provided
+    if (!$bookid) {
+        return $response->withJson(['error' => 'Book ID is required'], 400); // Bad Request
+    }
 
-    $conn = new mysqli($servername, $username, $password, $dbname);
+    // Create the database connection
+    $conn = new mysqli($servername, $username, $pass, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to select the book based on the provided bookid
+    $sql = "SELECT bookid, title, author, stuck, cover FROM books WHERE bookid = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the bookid parameter to the prepared statement
+        $stmt->bind_param("i", $bookid);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Bind the result to variables
+            $stmt->bind_result($bookid, $title, $author, $stuck, $cover);
+
+            // Fetch the result
+            if ($stmt->fetch()) {
+                // Return the book as JSON
+                $book = [
+                    'bookid' => $bookid,
+                    'title' => $title,
+                    'author' => $author,
+                    'stuck' => $stuck,
+                    'cover' => $cover,
+                ];
+
+                // Close the statement
+                $stmt->close();
+
+                // Return the book data as JSON (200 OK)
+                return $response->withJson($book);
+            } else {
+                // No book found with the provided bookid (404 Not Found)
+                return $response->withJson(['error' => 'Book not found'], 404);
+            }
+        } else {
+            // Error in executing query (500 Internal Server Error)
+            return $response->withJson(['error' => 'Query execution failed'], 500);
+        }
+    } else {
+        // Error in preparing the statement (500 Internal Server Error)
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+$app->put('/updatebookstuck', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
+    // Get the 'bookid' and 'stuck' from the request
+    $bookid = $request->getParsedBodyParam('bookid', null);
+    $stuck = $request->getParsedBodyParam('stuck', null);
+
+    // Check if both bookid and stuck are provided
+    if (!$bookid || !$stuck) {
+        return $response->withJson(['error' => 'Book ID and stuck value are required'], 400); // Bad Request
+    }
+
+    // Validate 'stuck' to make sure it's a positive integer
+    if (!is_numeric($stuck) || $stuck < 0) {
+        return $response->withJson(['error' => 'The stuck value must be a non-negative number'], 400); // Bad Request
+    }
+
+    // Create the database connection
+    $conn = new mysqli($servername, $username, $pass, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to update the stuck field for the specific book by bookid
+    $sql = "UPDATE books SET stuck = ? WHERE bookid = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the parameters
+        $stmt->bind_param("ii", $stuck, $bookid);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Check if any rows were affected (i.e., book exists and was updated)
+            if ($stmt->affected_rows > 0) {
+                // Return success response (200 OK)
+                return $response->withJson(['message' => 'Book stuck updated successfully'], 200);
+            } else {
+                // If no rows were affected, it means no book was found with the given bookid
+                return $response->withJson(['error' => 'No book found with the provided bookid'], 404); // Not Found
+            }
+        } else {
+            // Error in executing the query (500 Internal Server Error)
+            return $response->withJson(['error' => 'Failed to update book stuck'], 500);
+        }
+
+        // Close the statement
+        $stmt->close();
+    } else {
+        // Error in preparing statement (500 Internal Server Error)
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+$app->get('/getorders', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
+
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
     // Check for connection errors
     if ($conn->connect_error) {
@@ -444,7 +665,7 @@ $app->get('/getorders', function ($request, $response, $args) use ($servername, 
     }
 
     // Prepare SQL query to select all orders
-    $sql = "SELECT orderid, email, book_title, order_status, ordered_at FROM orders";
+    $sql = "SELECT orderid, email, book_title, quantity, order_status, ordered_at FROM orders";
 
     // Execute the query
     if ($result = $conn->query($sql)) {
@@ -466,7 +687,7 @@ $app->get('/getorders', function ($request, $response, $args) use ($servername, 
 });
 
 // New route to get order by orderid
-$app->get('/getorderbyid', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+$app->get('/getorderbyid', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
     // Get the 'orderid' query parameter from the request
     $orderid = $request->getQueryParam('orderid', null);
 
@@ -475,7 +696,7 @@ $app->get('/getorderbyid', function ($request, $response, $args) use ($servernam
         return $response->withJson(['error' => 'Order ID is required'], 400); // Bad Request
     }
 
-    $conn = new mysqli($servername, $username, $password, $dbname);
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
     // Check for connection errors
     if ($conn->connect_error) {
@@ -485,7 +706,7 @@ $app->get('/getorderbyid', function ($request, $response, $args) use ($servernam
     }
 
     // Prepare SQL query to select the order based on the provided orderid
-    $sql = "SELECT orderid, email, book_title, order_status, ordered_at FROM orders WHERE orderid = ?";
+    $sql = "SELECT orderid, email, book_title, quantity, order_status, ordered_at FROM orders WHERE orderid = ?";
 
     // Prepare statement
     if ($stmt = $conn->prepare($sql)) {
@@ -531,7 +752,7 @@ $app->get('/getorderbyid', function ($request, $response, $args) use ($servernam
 });
 
 // New route to get orders by email
-$app->get('/getorderbyemail', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+$app->get('/getorderbyemail', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
     // Get the 'email' query parameter from the request
     $email = $request->getQueryParam('email', null);
 
@@ -540,7 +761,7 @@ $app->get('/getorderbyemail', function ($request, $response, $args) use ($server
         return $response->withJson(['error' => 'Email is required'], 400); // Bad Request
     }
 
-    $conn = new mysqli($servername, $username, $password, $dbname);
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
     // Check for connection errors
     if ($conn->connect_error) {
@@ -550,7 +771,7 @@ $app->get('/getorderbyemail', function ($request, $response, $args) use ($server
     }
 
     // Prepare SQL query to select orders based on the provided email
-    $sql = "SELECT orderid, email, book_title, order_status, ordered_at FROM orders WHERE email = ?";
+    $sql = "SELECT orderid, email, book_title, quantity, order_status, ordered_at FROM orders WHERE email = ?";
 
     // Prepare statement
     if ($stmt = $conn->prepare($sql)) {
@@ -560,7 +781,7 @@ $app->get('/getorderbyemail', function ($request, $response, $args) use ($server
         // Execute the query
         if ($stmt->execute()) {
             // Bind the result to variables
-            $stmt->bind_result($orderid, $email, $book_title, $order_status, $ordered_at);
+            $stmt->bind_result($orderid, $email, $book_title, $quantity, $order_status, $ordered_at);
 
             // Fetch the result
             $orders = [];
@@ -569,6 +790,7 @@ $app->get('/getorderbyemail', function ($request, $response, $args) use ($server
                     'orderid' => $orderid,
                     'email' => $email,
                     'book_title' => $book_title,
+                    'quantity' =>$quantity,
                     'order_status' => $order_status,
                     'ordered_at' => $ordered_at,
                 ];
@@ -597,36 +819,222 @@ $app->get('/getorderbyemail', function ($request, $response, $args) use ($server
     $conn->close();
 });
 
-// function con(){
-//     $servername = "localhost";  // MySQL server (localhost if using XAMPP)
-//     $username = "root";         // MySQL username (default in XAMPP is root)
-//     $password = "";             // MySQL password (default in XAMPP is empty)
-//     $dbname = "webstore";    // Name of your database
+$app->put('/updateorderstatus', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
+    // Get the 'orderid' and 'order_status' from the request
+    $orderid = $request->getParsedBodyParam('orderid', null);
+    $order_status = $request->getParsedBodyParam('order_status', null); // true or false
 
-//     // Create connection
-//         try{    
-//             $conn = new mysqli($servername, $username, $password, $dbname);
-//         // Check connection
-//         // Prepare the SQL query to insert data
-//         $first_name = "John";
-//         $last_name = "Doe";
-//         $email = "john.doe@example.com";
-//         $password = "securepassword"; 
+    // Check if both orderid and order_status are provided
+    if (!$orderid || !isset($order_status)) {
+        return $response->withJson(['error' => 'Order ID and order status are required'], 400); // Bad Request
+    }
 
-//         $sql = "INSERT INTO users (first_name, last_name, email, password) 
-//                 VALUES ('$first_name', '$last_name', '$email', '$password')";
+    // Validate the order_status (it should be a boolean value)
+    if (!is_bool($order_status)) {
+        return $response->withJson(['error' => 'The order_status value must be a boolean (true or false)'], 400); // Bad Request
+    }
 
-//         if ($conn->query($sql) === TRUE) {
-//             echo "New record created successfully";
-//         } else {
-//             // echo "Error: " . $sql . "<br>" . $conn->error;
-//         }}catch(mysqli_sql_exception $e){
-//             echo $e->getMessage();
-//         }
+    // Create the database connection
+    $conn = new mysqli($servername, $username, $pass, $dbname);
 
-//     // Close connection
-//     $conn->close();
-// }
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to update the order status for the specific order by orderid
+    $sql = "UPDATE orders SET order_status = ? WHERE orderid = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the parameters
+        $stmt->bind_param("ii", $order_status, $orderid);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Check if any rows were affected (i.e., order exists and was updated)
+            if ($stmt->affected_rows > 0) {
+                // Return success response (200 OK)
+                return $response->withJson(['message' => 'Order status updated successfully'], 200);
+            } else {
+                // If no rows were affected, it means no order was found with the given orderid
+                return $response->withJson(['error' => 'No order found with the provided orderid'], 404); // Not Found
+            }
+        } else {
+            // Error in executing query (500 Internal Server Error)
+            return $response->withJson(['error' => 'Failed to update order status'], 500);
+        }
+
+        // Close the statement
+        $stmt->close();
+    } else {
+        // Error in preparing statement (500 Internal Server Error)
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+$app->post('/incrementlike', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
+    // Get the 'reviewid' query parameter from the request
+    $reviewid = $request->getParsedBodyParam('reviewid', null);
+
+    // Check if reviewid is provided
+    if (!$reviewid) {
+        return $response->withJson(['error' => 'Review ID is required'], 400); // Bad Request
+    }
+
+    // Create a new mysqli connection
+    $conn = new mysqli($servername, $username, $pass, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to update the like count by incrementing it by 1
+    $sql = "UPDATE reviews SET `like` = `like` + 1 WHERE id = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the reviewid parameter to the prepared statement
+        $stmt->bind_param("i", $reviewid);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Check if any rows were affected
+            if ($stmt->affected_rows > 0) {
+                // Return a success response (200 OK)
+                return $response->withJson([
+                    'status' => 'success',
+                    'message' => 'Like incremented successfully',
+                    'reviewid' => $reviewid
+                ]);
+            } else {
+                // No rows were updated (review not found)
+                return $response->withJson(['error' => 'Review not found'], 404);
+            }
+        } else {
+            // Error in executing the query
+            return $response->withJson(['error' => 'Query execution failed'], 500);
+        }
+    } else {
+        // Error in preparing the SQL query
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+$app->post('/incrementdislike', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
+    // Get the 'reviewid' from the request body
+    $reviewid = $request->getParsedBodyParam('reviewid', null);
+
+    // Check if reviewid is provided
+    if (!$reviewid) {
+        return $response->withJson(['error' => 'Review ID is required'], 400); // Bad Request
+    }
+
+    // Create a new mysqli connection
+    $conn = new mysqli($servername, $username, $pass, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to update the dislike count by incrementing it by 1
+    $sql = "UPDATE reviews SET `dislike` = `dislike` + 1 WHERE id = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the reviewid parameter to the prepared statement
+        $stmt->bind_param("i", $reviewid);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Check if any rows were affected
+            if ($stmt->affected_rows > 0) {
+                // Return a success response (200 OK)
+                return $response->withJson([
+                    'status' => 'success',
+                    'message' => 'Dislike incremented successfully',
+                    'reviewid' => $reviewid
+                ]);
+            } else {
+                // No rows were updated (review not found)
+                return $response->withJson(['error' => 'Review not found'], 404);
+            }
+        } else {
+            // Error in executing the query
+            return $response->withJson(['error' => 'Query execution failed'], 500);
+        }
+    } else {
+        // Error in preparing the SQL query
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+$app->delete('/deletebook', function ($request, $response, $args) use ($servername, $username, $pass, $dbname) {
+    // Get the 'bookid' query parameter from the request
+    $bookid = $request->getQueryParam('bookid', null);
+
+    // Check if bookid is provided
+    if (!$bookid) {
+        return $response->withJson(['error' => 'Book ID is required'], 400); // Bad Request
+    }
+
+    // Create a new mysqli connection
+    $conn = new mysqli($servername, $username, $pass, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare the SQL query to delete the book with the provided bookid
+    $sql = "DELETE FROM books WHERE bookid = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the bookid parameter to the prepared statement
+        $stmt->bind_param("i", $bookid);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Check if any rows were affected (i.e., the book was deleted)
+            if ($stmt->affected_rows > 0) {
+                // Return success response
+                return $response->withJson(['status' => 'success', 'message' => 'Book deleted successfully']);
+            } else {
+                // If no rows were affected, it means the book doesn't exist
+                return $response->withJson(['error' => 'Book not found'], 404); // Not Found
+            }
+        } else {
+            // Error in executing the query
+            return $response->withJson(['error' => 'Query execution failed'], 500);
+        }
+    } else {
+        // Error in preparing the SQL query
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
 
 
 $app->run();
