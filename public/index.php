@@ -239,6 +239,364 @@ $app->post('/neworder', function ($request, $response, $args) use ($servername, 
     }
 });
 
+$app->get('/getusers', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+    // Create the database connection
+    $conn = new mysqli($servername, $username, $password, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to select all users
+    $sql = "SELECT userid, first_name, last_name, email, password FROM users";
+
+    // Execute the query
+    if ($result = $conn->query($sql)) {
+        // Fetch all users as an associative array
+        $users = $result->fetch_all(MYSQLI_ASSOC);
+        
+        // Free result set
+        $result->free();
+
+        // Return the users as JSON (200 OK)
+        return $response->withJson($users);
+    } else {
+        // Query failed (500 Internal Server Error)
+        return $response->withJson(['error' => 'Failed to retrieve users'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+$app->get('/getuserbyemail', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+    // Get the 'email' query parameter from the request
+    $email = $request->getQueryParam('email', null);
+
+    // Check if email is provided
+    if (!$email) {
+        return $response->withJson(['error' => 'Email is required'], 400); // Bad Request
+    }
+
+    // Create the database connection
+    $conn = new mysqli($servername, $username, $password, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to select the user based on the provided email
+    $sql = "SELECT userid, first_name, last_name, email, password FROM users WHERE email = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the email parameter to the prepared statement
+        $stmt->bind_param("s", $email);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Bind the result to variables
+            $stmt->bind_result($userid, $first_name, $last_name, $email, $password);
+
+            // Fetch the result
+            if ($stmt->fetch()) {
+                // Return the user as JSON
+                $user = [
+                    'userid' => $userid,
+                    'first_name' => $first_name,
+                    'last_name' => $last_name,
+                    'email' => $email,
+                ];
+                
+                // Close the statement
+                $stmt->close();
+
+                // Return the user data as JSON (200 OK)
+                return $response->withJson($user);
+            } else {
+                // No user found with the provided email (404 Not Found)
+                return $response->withJson(['error' => 'User not found'], 404);
+            }
+        } else {
+            // Error in executing query (500 Internal Server Error)
+            return $response->withJson(['error' => 'Query execution failed'], 500);
+        }
+    } else {
+        // Error in preparing the statement (500 Internal Server Error)
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+$app->get('/getuserbyid', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+    // Get the 'id' query parameter from the request
+    $id = $request->getQueryParam('id', null);
+
+    // Check if ID is provided
+    if (!$id) {
+        return $response->withJson(['error' => 'User ID is required'], 400); // Bad Request
+    }
+
+    // Create the database connection
+    $conn = new mysqli($servername, $username, $password, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to select the user based on the provided ID
+    $sql = "SELECT userid, first_name, last_name, email, password FROM users WHERE userid = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the ID parameter to the prepared statement
+        $stmt->bind_param("i", $id);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Bind the result to variables
+            $stmt->bind_result($userid, $first_name, $last_name, $email, $password);
+
+            // Fetch the result
+            if ($stmt->fetch()) {
+                // Return the user as JSON
+                $user = [
+                    'userid' => $userid,
+                    'first_name' => $first_name,
+                    'last_name' => $last_name,
+                    'email' => $email,
+                    'password' => $password, // You might want to exclude password in a real-world scenario
+                ];
+                
+                // Close the statement
+                $stmt->close();
+
+                // Return the user data as JSON (200 OK)
+                return $response->withJson($user);
+            } else {
+                // No user found with the provided ID (404 Not Found)
+                return $response->withJson(['error' => 'User not found'], 404);
+            }
+        } else {
+            // Error in executing query (500 Internal Server Error)
+            return $response->withJson(['error' => 'Query execution failed'], 500);
+        }
+    } else {
+        // Error in preparing the statement (500 Internal Server Error)
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+$app->get('/getbooks', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+    // Create the database connection
+    $conn = new mysqli($servername, $username, $password, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to select all books
+    $sql = "SELECT bookid, title, author, cover FROM books";
+
+    // Execute the query
+    if ($result = $conn->query($sql)) {
+        // Fetch all books as an associative array
+        $books = $result->fetch_all(MYSQLI_ASSOC);
+        
+        // Free result set
+        $result->free();
+
+        // Return the books as JSON (200 OK)
+        return $response->withJson($books);
+    } else {
+        // Query failed (500 Internal Server Error)
+        return $response->withJson(['error' => 'Failed to retrieve books'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+$app->get('/getorders', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+
+    $conn = new mysqli($servername, $username, $password, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to select all orders
+    $sql = "SELECT orderid, email, book_title, order_status, ordered_at FROM orders";
+
+    // Execute the query
+    if ($result = $conn->query($sql)) {
+        // Fetch all orders as an associative array
+        $orders = $result->fetch_all(MYSQLI_ASSOC);
+        
+        // Free result set
+        $result->free();
+
+        // Return the orders as JSON (200 OK)
+        return $response->withJson($orders);
+    } else {
+        // Query failed (500 Internal Server Error)
+        return $response->withJson(['error' => 'Failed to retrieve orders'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+// New route to get order by orderid
+$app->get('/getorderbyid', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+    // Get the 'orderid' query parameter from the request
+    $orderid = $request->getQueryParam('orderid', null);
+
+    // Check if orderid is provided
+    if (!$orderid) {
+        return $response->withJson(['error' => 'Order ID is required'], 400); // Bad Request
+    }
+
+    $conn = new mysqli($servername, $username, $password, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to select the order based on the provided orderid
+    $sql = "SELECT orderid, email, book_title, order_status, ordered_at FROM orders WHERE orderid = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the orderid parameter to the prepared statement
+        $stmt->bind_param("i", $orderid);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Bind the result to variables
+            $stmt->bind_result($orderid, $email, $book_title, $order_status, $ordered_at);
+
+            // Fetch the result
+            if ($stmt->fetch()) {
+                // Return the order as JSON
+                $order = [
+                    'orderid' => $orderid,
+                    'email' => $email,
+                    'book_title' => $book_title,
+                    'order_status' => $order_status,
+                    'ordered_at' => $ordered_at,
+                ];
+
+                // Close the statement
+                $stmt->close();
+
+                // Return the order data as JSON (200 OK)
+                return $response->withJson($order);
+            } else {
+                // No order found with the provided orderid (404 Not Found)
+                return $response->withJson(['error' => 'Order not found'], 404);
+            }
+        } else {
+            // Error in executing query (500 Internal Server Error)
+            return $response->withJson(['error' => 'Query execution failed'], 500);
+        }
+    } else {
+        // Error in preparing the statement (500 Internal Server Error)
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
+// New route to get orders by email
+$app->get('/getorderbyemail', function ($request, $response, $args) use ($servername, $username, $password, $dbname) {
+    // Get the 'email' query parameter from the request
+    $email = $request->getQueryParam('email', null);
+
+    // Check if email is provided
+    if (!$email) {
+        return $response->withJson(['error' => 'Email is required'], 400); // Bad Request
+    }
+
+    $conn = new mysqli($servername, $username, $password, $dbname);
+
+    // Check for connection errors
+    if ($conn->connect_error) {
+        return $response->withStatus(500) // Internal Server Error
+                        ->withHeader('Content-Type', 'application/json')
+                        ->write(json_encode(['status' => 'error', 'message' => 'Connection failed: ' . $conn->connect_error]));
+    }
+
+    // Prepare SQL query to select orders based on the provided email
+    $sql = "SELECT orderid, email, book_title, order_status, ordered_at FROM orders WHERE email = ?";
+
+    // Prepare statement
+    if ($stmt = $conn->prepare($sql)) {
+        // Bind the email parameter to the prepared statement
+        $stmt->bind_param("s", $email);
+
+        // Execute the query
+        if ($stmt->execute()) {
+            // Bind the result to variables
+            $stmt->bind_result($orderid, $email, $book_title, $order_status, $ordered_at);
+
+            // Fetch the result
+            $orders = [];
+            while ($stmt->fetch()) {
+                $orders[] = [
+                    'orderid' => $orderid,
+                    'email' => $email,
+                    'book_title' => $book_title,
+                    'order_status' => $order_status,
+                    'ordered_at' => $ordered_at,
+                ];
+            }
+
+            // Close the statement
+            $stmt->close();
+
+            if (count($orders) > 0) {
+                // Return the orders data as JSON (200 OK)
+                return $response->withJson($orders);
+            } else {
+                // No orders found for the provided email (404 Not Found)
+                return $response->withJson(['error' => 'No orders found for this email'], 404);
+            }
+        } else {
+            // Error in executing query (500 Internal Server Error)
+            return $response->withJson(['error' => 'Query execution failed'], 500);
+        }
+    } else {
+        // Error in preparing the statement (500 Internal Server Error)
+        return $response->withJson(['error' => 'Database query preparation failed'], 500);
+    }
+
+    // Close the connection
+    $conn->close();
+});
+
 // function con(){
 //     $servername = "localhost";  // MySQL server (localhost if using XAMPP)
 //     $username = "root";         // MySQL username (default in XAMPP is root)
